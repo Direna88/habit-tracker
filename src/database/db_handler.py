@@ -11,7 +11,15 @@ DT_FMT = "%Y-%m-%d %H:%M:%S"
 
 
 class DbHandler:
-    """Small SQLite repository for habits and completions."""
+    """
+    SQLite-backed persistence layer for the Habit Tracker.
+
+    Responsibilities:
+    - store and retrieve habits
+    - store and retrieve completion events
+    - initialize schema
+    - seed example data (5 habits, 4 weeks) for analysis and testing
+    """
 
     def __init__(self, db_path: str | Path = "habit_tracker.db") -> None:
         self.db_path = str(db_path)
@@ -20,6 +28,7 @@ class DbHandler:
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON;")
         return conn
 
     def _init_schema(self) -> None:
