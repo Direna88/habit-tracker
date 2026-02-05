@@ -28,7 +28,13 @@ def cmd_list() -> None:
         click.echo("No habits stored yet.")
         return
     for h in habits:
-        click.echo(f"[{h.id}] {h.name} | {h.periodicity} | created: {h.created_at.strftime('%Y-%m-%d')}")
+        click.echo(
+            f"[{h.id:02d}] "
+            f"{h.name:<20} | "
+            f"{h.periodicity:<6} | "
+            f"created {h.created_at.date()}"
+        )
+
 
 
 @cli.command("create")
@@ -36,7 +42,7 @@ def cmd_list() -> None:
 @click.option("--description", prompt=True, help="More detail about the task.")
 @click.option("--periodicity", type=click.Choice(["daily", "weekly"]), prompt=True)
 def cmd_create(name: str, description: str, periodicity: str) -> None:
-    """Create a new habit."""
+    """Create a new habit with a task description and periodicity."""
     h = db.create_habit(name=name, description=description, periodicity=periodicity)  # type: ignore[arg-type]
     click.echo(f"Created habit [{h.id}] {h.name} ({h.periodicity}).")
 
@@ -52,7 +58,7 @@ def cmd_delete(habit_id: int) -> None:
 @cli.command("checkoff")
 @click.argument("habit_id", type=int)
 def cmd_checkoff(habit_id: int) -> None:
-    """Mark a habit as completed now."""
+    """Mark a habit as completed for the current period."""
     habit = db.get_habit(habit_id)
     if habit is None:
         click.echo("Habit not found.")
