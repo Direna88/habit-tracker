@@ -28,21 +28,32 @@ class DbHandler:
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
+        # SQLite does not enforce foreign keys unless explicitly enabled per connection.
         conn.execute("PRAGMA foreign_keys = ON;")
         return conn
 
     def _init_schema(self) -> None:
         with self._connect() as conn:
-            conn.execute("PRAGMA foreign_keys = ON;")
             conn.execute("""
-                CREATE TABLE IF NOT EXISTS habits (
+                CREATE TABLE IF NOT EXISTS users (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL UNIQUE,
-                    description TEXT NOT NULL,
-                    periodicity TEXT NOT NULL CHECK(periodicity IN ('daily','weekly')),
+                    username TEXT NOT NULL UNIQUE,
                     created_at TEXT NOT NULL
                 )
             """)
+
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS habits (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    name TEXT NOT NULL UNIQUE,
+                    description TEXT NOT NULL,
+                    periodicity TEXT NOT NULL CHECK(periodicity IN ('daily','weekly')),
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+                )
+            """)
+
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS completions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -52,15 +63,48 @@ class DbHandler:
                 )
             """)
 
+    # ---------- users ----------
+    def _ensure_default_user(self) -> int:
+        """
+        Ensure a single default user exists and return the user ID.
+
+        The app is designed for a single user, but persisting the user entity
+        keeps the domain model aligned with the conception phase and allows
+        later extensions to multi-user support.
+        """
+        with self._connect() as conn:
+            row = conn.execute("SELECT id FROM users LIMIT 1").fetchone()
+            if row:
+                return int(row["id"])
+
+            created_at = datetime.now().strftime(DT_FMT)
+            cur = conn.execute(
+                "INSERT INTO users (username, created_at) VALUES (?, ?)",
+                ("default_user", created_at),
+            )
+            return int(cur.lastrowid)
+
     # ---------- habits ----------
     def create_habit(self, name: str, description: str, periodicity: Periodicity) -> Habit:
+        user_id = self._ensure_default_user()
         created_at = datetime.now()
+
         with self._connect() as conn:
             cur = conn.execute(
-                "INSERT INTO habits (name, description, periodicity, created_at) VALUES (?, ?, ?, ?)",
-                (name.strip(), description.strip(), periodicity, created_at.strftime(DT_FMT)),
+                """
+                INSERT INTO habits (user_id, name, description, periodicity, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    user_id,
+                    name.strip(),
+                    description.strip(),
+                    periodicity,
+                    created_at.strftime(DT_FMT),
+                ),
             )
             hid = int(cur.lastrowid)
+
         return Habit(hid, name.strip(), description.strip(), periodicity, created_at)
 
     def list_habits(self) -> list[Habit]:
@@ -125,7 +169,10 @@ class DbHandler:
         if self.list_habits():
             return
 
-        # Your own set of habits (different from your friend's list)
+        # ensure a single user exists (single-user design)
+        self._ensure_default_user()
+
+        # predefined habits
         h1 = self.create_habit("Morning stretch", "5–10 min mobility routine.", "daily")
         h2 = self.create_habit("No sugary drink", "Avoid soda/energy drinks.", "daily")
         h3 = self.create_habit("Study session", "45 min focused study.", "daily")
@@ -133,7 +180,9 @@ class DbHandler:
         h5 = self.create_habit("Budget review", "Check spending & plan week.", "weekly")
 
         # 4-week fixture: last 28 days, deterministic pattern with intentional misses
-        start = (datetime.now() - timedelta(days=27)).replace(hour=18, minute=0, second=0, microsecond=0)
+        start = (datetime.now() - timedelta(days=27)).replace(
+            hour=18, minute=0, second=0, microsecond=0
+        )
 
         for day in range(28):
             d = start + timedelta(days=day)
