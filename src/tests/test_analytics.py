@@ -1,3 +1,9 @@
+"""Unit tests for analytics functions.
+
+These tests operate purely on model objects and validate the
+calculation of streaks across daily and weekly periods.
+"""
+
 from datetime import datetime, timedelta
 
 from src.models.habit import Habit
@@ -29,6 +35,19 @@ def test_longest_streak_counts_one_per_period() -> None:
         Completion(None, 1, created + timedelta(hours=2)),
         Completion(None, 1, created + timedelta(days=1, hours=1)),
     ]
+    assert longest_streak_for(h, comps) == 2
+
+def test_longest_streak_weekly_counts_one_per_period() -> None:
+    created = datetime(2025, 1, 1, 10, 0, 0)
+    h = Habit(1, "Weekly", "x", "weekly", created)
+
+    # Two completions in the same week (period 0) must count only once.
+    comps = [
+        Completion(None, 1, created + timedelta(days=1)),  # week 0
+        Completion(None, 1, created + timedelta(days=2)),  # still week 0
+        Completion(None, 1, created + timedelta(days=8)),  # week 1
+    ]
+    # Completed week 0 and week 1 consecutively -> streak is 2 periods
     assert longest_streak_for(h, comps) == 2
 
 

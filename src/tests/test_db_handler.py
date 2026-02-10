@@ -1,4 +1,13 @@
-from datetime import datetime
+from __future__ import annotations
+
+"""Tests covering DbHandler integration behaviors.
+
+These tests use temporary DB files to validate seeding, persistence,
+and deletion cascades implemented by `DbHandler`.
+"""
+
+
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from src.database.db_handler import DbHandler
@@ -25,12 +34,19 @@ def test_completion_is_persisted(tmp_path: Path) -> None:
     habit = db.list_habits()[0]
 
     before = db.list_completions(habit_id=habit.id)  # type: ignore[arg-type]
-    db.add_completion(habit.id)  # type: ignore[arg-type]
+
+    # Add a completion in a NEW period so it must be saved.
+    # Using +2 days makes this test robust even if seed already added a completion today.
+    when = datetime.now() + timedelta(days=2)
+    saved = db.add_completion(habit.id, when=when)  # type: ignore[arg-type]
+
     after = db.list_completions(habit_id=habit.id)  # type: ignore[arg-type]
 
+    assert saved is True
     assert len(after) == len(before) + 1
     assert after[-1].habit_id == habit.id
     assert isinstance(after[-1].completed_at, datetime)
+
 
 def test_delete_habit_removes_completions(tmp_path: Path) -> None:
     db_file = tmp_path / "habits.db"

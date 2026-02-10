@@ -1,25 +1,33 @@
 from __future__ import annotations
 
+"""
+Persistence layer (SQLite) for the Habit Tracker.
+
+Why this file exists and design notes:
+- Uses a lightweight file-backed SQLite DB to keep the project
+    simple and dependency-free for a small single-user CLI tool.
+- Dates are stored as formatted strings (`DT_FMT`) for portability
+    and ease of reading when inspecting the DB file manually.
+- Foreign key cascades are enabled so deleting users/habits
+    automatically removes dependent rows (habits -> completions).
+- The handler intentionally provides simple, explicit methods
+    mapping closely to application operations (create/list/get/delete).
+"""
+
 import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 
 from src.models.habit import Habit, Periodicity
 from src.models.completion import Completion
+from src.models.user import User
 
+# Consistent format used when persisting datetimes to SQLite TEXT columns.
 DT_FMT = "%Y-%m-%d %H:%M:%S"
 
 
 class DbHandler:
-    """
-    SQLite-backed persistence layer for the Habit Tracker.
-
-    Responsibilities:
-    - store and retrieve habits
-    - store and retrieve completion events
-    - initialize schema
-    - seed example data (5 habits, 4 weeks) for analysis and testing
-    """
+    """SQLite-backed persistence layer for the Habit Tracker."""
 
     def __init__(self, db_path: str | Path = "habit_tracker.db") -> None:
         self.db_path = str(db_path)
@@ -28,7 +36,6 @@ class DbHandler:
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
-        # SQLite does not enforce foreign keys unless explicitly enabled per connection.
         conn.execute("PRAGMA foreign_keys = ON;")
         return conn
 
@@ -46,11 +53,12 @@ class DbHandler:
                 CREATE TABLE IF NOT EXISTS habits (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER NOT NULL,
-                    name TEXT NOT NULL UNIQUE,
+                    name TEXT NOT NULL,
                     description TEXT NOT NULL,
                     periodicity TEXT NOT NULL CHECK(periodicity IN ('daily','weekly')),
                     created_at TEXT NOT NULL,
-                    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+                    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+                    UNIQUE(user_id, name)
                 )
             """)
 
@@ -63,17 +71,52 @@ class DbHandler:
                 )
             """)
 
-    # ---------- users ----------
+    # ----------------------------
+    # Users (NEW PUBLIC API)
+    # ----------------------------
+
+    def _row_to_user(self, row: sqlite3.Row) -> User:
+        return User(
+            id=int(row["id"]),
+            username=str(row["username"]),
+            created_at=datetime.strptime(str(row["created_at"]), DT_FMT),
+        )
+
+    def create_user(self, username: str, created_at: datetime | None = None) -> User:
+        created_at = created_at or datetime.now()
+        username = username.strip()
+
+        with self._connect() as conn:
+            cur = conn.execute(
+                "INSERT INTO users (username, created_at) VALUES (?, ?)",
+                (username, created_at.strftime(DT_FMT)),
+            )
+            uid = int(cur.lastrowid)
+
+        return User(id=uid, username=username, created_at=created_at)
+
+    def list_users(self) -> list[User]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM users ORDER BY id").fetchall()
+        return [self._row_to_user(r) for r in rows]
+
+    def get_user(self, user_id: int) -> User | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        return self._row_to_user(row) if row else None
+
+    def delete_user(self, user_id: int) -> None:
+        # FK cascade should delete habits + completions
+        with self._connect() as conn:
+            conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+
     def _ensure_default_user(self) -> int:
         """
-        Ensure a single default user exists and return the user ID.
-
-        The app is designed for a single user, but persisting the user entity
-        keeps the domain model aligned with the conception phase and allows
-        later extensions to multi-user support.
+        Keep old behavior for the CLI: the app supports a single default user.
+        If a user is not provided, we attach habits to the first user or create default_user.
         """
         with self._connect() as conn:
-            row = conn.execute("SELECT id FROM users LIMIT 1").fetchone()
+            row = conn.execute("SELECT id FROM users ORDER BY id LIMIT 1").fetchone()
             if row:
                 return int(row["id"])
 
@@ -84,42 +127,9 @@ class DbHandler:
             )
             return int(cur.lastrowid)
 
-    # ---------- habits ----------
-    def create_habit(self, name: str, description: str, periodicity: Periodicity) -> Habit:
-        user_id = self._ensure_default_user()
-        created_at = datetime.now()
-
-        with self._connect() as conn:
-            cur = conn.execute(
-                """
-                INSERT INTO habits (user_id, name, description, periodicity, created_at)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (
-                    user_id,
-                    name.strip(),
-                    description.strip(),
-                    periodicity,
-                    created_at.strftime(DT_FMT),
-                ),
-            )
-            hid = int(cur.lastrowid)
-
-        return Habit(hid, name.strip(), description.strip(), periodicity, created_at)
-
-    def list_habits(self) -> list[Habit]:
-        with self._connect() as conn:
-            rows = conn.execute("SELECT * FROM habits ORDER BY id").fetchall()
-        return [self._row_to_habit(r) for r in rows]
-
-    def get_habit(self, habit_id: int) -> Habit | None:
-        with self._connect() as conn:
-            row = conn.execute("SELECT * FROM habits WHERE id = ?", (habit_id,)).fetchone()
-        return self._row_to_habit(row) if row else None
-
-    def delete_habit(self, habit_id: int) -> None:
-        with self._connect() as conn:
-            conn.execute("DELETE FROM habits WHERE id = ?", (habit_id,))
+    # ----------------------------
+    # Habits
+    # ----------------------------
 
     def _row_to_habit(self, row: sqlite3.Row) -> Habit:
         return Habit(
@@ -130,21 +140,123 @@ class DbHandler:
             created_at=datetime.strptime(str(row["created_at"]), DT_FMT),
         )
 
-    # ---------- completions ----------
-    def add_completion(self, habit_id: int, when: datetime | None = None) -> Completion:
-        ts = when or datetime.now()
+    def create_habit(
+        self,
+        name: str,
+        description: str,
+        periodicity: Periodicity,
+        created_at: datetime | None = None,
+        user_id: int | None = None,
+    ) -> Habit:
+        """
+        Create a habit. If user_id is None, attaches to default_user (backwards compatible).
+        """
+        created_at = created_at or datetime.now()
+        user_id = user_id if user_id is not None else self._ensure_default_user()
+
+        name = name.strip()
+        description = description.strip()
+
+        # optional safety check: user must exist
+        if self.get_user(user_id) is None:
+            raise ValueError(f"user_id={user_id} not found")
+
         with self._connect() as conn:
             cur = conn.execute(
+                """
+                INSERT INTO habits (user_id, name, description, periodicity, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (user_id, name, description, periodicity, created_at.strftime(DT_FMT)),
+            )
+            hid = int(cur.lastrowid)
+
+        return Habit(hid, name, description, periodicity, created_at)
+
+    def list_habits(self, user_id: int | None = None) -> list[Habit]:
+        with self._connect() as conn:
+            if user_id is None:
+                rows = conn.execute("SELECT * FROM habits ORDER BY id").fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM habits WHERE user_id = ? ORDER BY id", (user_id,)
+                ).fetchall()
+        return [self._row_to_habit(r) for r in rows]
+
+    def get_habit(self, habit_id: int, user_id: int | None = None) -> Habit | None:
+        with self._connect() as conn:
+            if user_id is None:
+                row = conn.execute(
+                    "SELECT * FROM habits WHERE id = ?", (habit_id,)
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT * FROM habits WHERE id = ? AND user_id = ?",
+                    (habit_id, user_id),
+                ).fetchone()
+
+        return self._row_to_habit(row) if row else None
+
+    def delete_habit(self, habit_id: int, user_id: int | None = None) -> None:
+        with self._connect() as conn:
+            if user_id is None:
+                conn.execute("DELETE FROM habits WHERE id = ?", (habit_id,))
+            else:
+                conn.execute(
+                    "DELETE FROM habits WHERE id = ? AND user_id = ?",
+                    (habit_id, user_id),
+                )
+
+    # ----------------------------
+    # Completions
+    # ----------------------------
+
+    def _period_id(self, created_at: datetime, period_days: int, ts: datetime) -> int:
+        delta_days = (ts.date() - created_at.date()).days
+        return -1 if delta_days < 0 else delta_days // period_days
+
+    def _has_completion_in_period(self, habit: Habit, ts: datetime) -> bool:
+        period_days = habit.period_length_days()
+        target_pid = self._period_id(habit.created_at, period_days, ts)
+        if target_pid < 0:
+            return False
+
+        completions = self.list_completions(habit_id=habit.id)
+        existing_pids = set(
+            self._period_id(habit.created_at, period_days, c.completed_at)
+            for c in completions
+        )
+        return target_pid in existing_pids
+
+    def add_completion(self, habit_id: int, when: datetime | None = None) -> bool:
+        """
+        Add a completion for a habit.
+
+        Returns:
+          True  -> completion saved
+          False -> already completed in this period (or habit missing)
+        """
+        ts = when or datetime.now()
+        habit = self.get_habit(habit_id)
+        if habit is None:
+            return False
+
+        if self._has_completion_in_period(habit, ts):
+            return False
+
+        with self._connect() as conn:
+            conn.execute(
                 "INSERT INTO completions (habit_id, completed_at) VALUES (?, ?)",
                 (habit_id, ts.strftime(DT_FMT)),
             )
-            cid = int(cur.lastrowid)
-        return Completion(cid, habit_id, ts)
+        return True
 
     def list_completions(self, habit_id: int | None = None) -> list[Completion]:
         with self._connect() as conn:
             if habit_id is None:
-                rows = conn.execute("SELECT * FROM completions ORDER BY completed_at").fetchall()
+                rows = conn.execute(
+                    "SELECT * FROM completions ORDER BY completed_at"
+                ).fetchall()
             else:
                 rows = conn.execute(
                     "SELECT * FROM completions WHERE habit_id = ? ORDER BY completed_at",
@@ -160,34 +272,45 @@ class DbHandler:
             for r in rows
         ]
 
-    # ---------- seed / fixture ----------
+    # ----------------------------
+    # Seed
+    # ----------------------------
+
     def seed_if_empty(self) -> None:
-        """
-        IU requirement: provide 5 predefined habits (min. 1 daily + 1 weekly),
-        plus example tracking data for 4 weeks.
-        """
+        """Seed 5 habits + 4 weeks of fixture data if DB is empty."""
         if self.list_habits():
             return
 
-        # ensure a single user exists (single-user design)
-        self._ensure_default_user()
+        user_id = self._ensure_default_user()
 
-        # predefined habits
-        h1 = self.create_habit("Morning stretch", "5–10 min mobility routine.", "daily")
-        h2 = self.create_habit("No sugary drink", "Avoid soda/energy drinks.", "daily")
-        h3 = self.create_habit("Study session", "45 min focused study.", "daily")
-        h4 = self.create_habit("Weekly cleaning", "Clean room + laundry.", "weekly")
-        h5 = self.create_habit("Budget review", "Check spending & plan week.", "weekly")
-
-        # 4-week fixture: last 28 days, deterministic pattern with intentional misses
         start = (datetime.now() - timedelta(days=27)).replace(
             hour=18, minute=0, second=0, microsecond=0
+        )
+
+        h1 = self.create_habit(
+            "Morning stretch", "5–10 min mobility routine.", "daily",
+            created_at=start, user_id=user_id
+        )
+        h2 = self.create_habit(
+            "No sugary drink", "Avoid soda/energy drinks.", "daily",
+            created_at=start, user_id=user_id
+        )
+        h3 = self.create_habit(
+            "Study session", "45 min focused study.", "daily",
+            created_at=start, user_id=user_id
+        )
+        h4 = self.create_habit(
+            "Weekly cleaning", "Clean room + laundry.", "weekly",
+            created_at=start, user_id=user_id
+        )
+        h5 = self.create_habit(
+            "Budget review", "Check spending & plan week.", "weekly",
+            created_at=start, user_id=user_id
         )
 
         for day in range(28):
             d = start + timedelta(days=day)
 
-            # daily habits: varied completion patterns
             if day % 6 != 5:
                 self.add_completion(h1.id, d)  # type: ignore[arg-type]
             if day % 4 != 3:
@@ -195,8 +318,7 @@ class DbHandler:
             if day % 3 != 2:
                 self.add_completion(h3.id, d + timedelta(hours=1))  # type: ignore[arg-type]
 
-            # weekly habits: once per week (with a missed week for realism)
             if day in (2, 9, 16, 23):
                 self.add_completion(h4.id, d + timedelta(hours=2))  # type: ignore[arg-type]
-            if day in (4, 11, 18):  # intentionally miss week 4
+            if day in (4, 11, 18):
                 self.add_completion(h5.id, d + timedelta(hours=3))  # type: ignore[arg-type]

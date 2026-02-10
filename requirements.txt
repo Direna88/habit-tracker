@@ -1,7 +1,12 @@
+## Requirements for running and testing the project
+# `click` provides the CLI surface used by `src.main`.
 click==8.3.1
+# `colorama` is a common cross-platform helper for colored output
 colorama==0.4.6
+# Test/runtime helper libraries (indirect test dependencies for pytest plugins)
 iniconfig==2.3.0
 packaging==26.0
 pluggy==1.6.0
 Pygments==2.19.2
+# `pytest` used for the test suite
 pytest==9.0.2

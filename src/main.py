@@ -1,16 +1,32 @@
 from __future__ import annotations
 
+"""
+Command-line interface for the Habit Tracker.
+
+Uses `click` for a simple and discoverable CLI surface. The module
+initializes a `DbHandler` instance against a top-level database file
+and seeds example data for local development and demos.
+"""
+
+from pathlib import Path
 import click
 
 from src.database.db_handler import DbHandler
 from src.analytics.analytics import (
-    all_habits,
     habits_by_periodicity,
     longest_streak_for,
     longest_streak_overall,
+    habits_due_today,
+    longest_streaks_per_habit,
 )
 
-db = DbHandler("habit_tracker.db")
+# Default DB file next to the repository root; using a fixed path makes
+# it obvious where data lives for the demo CLI. Tests create temporary
+# DB files instead of using this path.
+DB_PATH = Path(__file__).resolve().parent.parent / "habit_tracker.db"
+db = DbHandler(str(DB_PATH))
+# Seed demo data on first run to provide a pleasant out-of-the-box
+# experience when running the CLI locally.
 db.seed_if_empty()
 
 
@@ -34,7 +50,6 @@ def cmd_list() -> None:
             f"{h.periodicity:<6} | "
             f"created {h.created_at.date()}"
         )
-
 
 
 @cli.command("create")
@@ -63,8 +78,15 @@ def cmd_checkoff(habit_id: int) -> None:
     if habit is None:
         click.echo("Habit not found.")
         return
-    db.add_completion(habit_id)
-    click.echo(f"Saved completion for: {habit.name}")
+
+    saved = db.add_completion(habit_id)
+
+    if saved:
+        click.echo(f"Saved completion for: {habit.name}")
+    else:
+        click.echo(
+            f"Already completed '{habit.name}' for the current {habit.periodicity} period."
+        )
 
 
 @cli.group("analytics")
@@ -73,16 +95,10 @@ def analytics() -> None:
     pass
 
 
-@analytics.command("all")
-def a_all() -> None:
-    habits = all_habits(db.list_habits())
-    for h in habits:
-        click.echo(f"[{h.id}] {h.name} ({h.periodicity})")
-
-
 @analytics.command("period")
 @click.argument("periodicity", type=click.Choice(["daily", "weekly"]))
 def a_period(periodicity: str) -> None:
+    """List habits filtered by periodicity."""
     habits = habits_by_periodicity(db.list_habits(), periodicity)
     for h in habits:
         click.echo(f"[{h.id}] {h.name} ({h.periodicity})")
@@ -90,6 +106,7 @@ def a_period(periodicity: str) -> None:
 
 @analytics.command("longest-overall")
 def a_longest_overall() -> None:
+    """Show the habit with the longest streak overall."""
     habits = db.list_habits()
     comps = db.list_completions()
     h, streak = longest_streak_overall(habits, comps)
@@ -102,6 +119,7 @@ def a_longest_overall() -> None:
 @analytics.command("longest")
 @click.argument("habit_id", type=int)
 def a_longest(habit_id: int) -> None:
+    """Show the longest streak for a single habit."""
     habit = db.get_habit(habit_id)
     if habit is None:
         click.echo("Habit not found.")
@@ -111,5 +129,34 @@ def a_longest(habit_id: int) -> None:
     click.echo(f"Longest streak for {habit.name}: {streak} periods")
 
 
+@analytics.command("streaks")
+def a_streaks() -> None:
+    """Show longest streak for every habit."""
+    habits = db.list_habits()
+    comps = db.list_completions()
+    rows = longest_streaks_per_habit(habits, comps)
+    for h, s in rows:
+        click.echo(f"[{h.id}] {h.name} ({h.periodicity}) → longest streak: {s} periods")
+
+
+@analytics.command("due-today")
+def a_due_today() -> None:
+    """Show habits that are due in the current period."""
+    habits = db.list_habits()
+    comps = db.list_completions()
+    due = habits_due_today(habits, comps)
+
+    if not due:
+        click.echo("No habits due right now. Well done! 🎉")
+    else:
+        click.echo("Habits due now:")
+        for h in due:
+            click.echo(f"- [{h.id}] {h.name} ({h.periodicity})")
+
+
+def main() -> None:
+    cli(prog_name="habit-tracker")
+
+
 if __name__ == "__main__":
-    cli()
+    main()
