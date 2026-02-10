@@ -1,4 +1,5 @@
 .habit/
+.venv/
 __pycache__/
 *.pyc
 *.db
