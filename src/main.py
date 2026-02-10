@@ -147,7 +147,7 @@ def a_due_today() -> None:
     due = habits_due_today(habits, comps)
 
     if not due:
-        click.echo("No habits due right now. Well done! 🎉")
+        click.echo("No habits due right now. Well done!!")
     else:
         click.echo("Habits due now:")
         for h in due:
