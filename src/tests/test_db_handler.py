@@ -6,18 +6,20 @@ These tests use temporary DB files to validate seeding, persistence,
 and deletion cascades implemented by `DbHandler`.
 """
 
-
 from datetime import datetime, timedelta
 from pathlib import Path
 
 from src.database.db_handler import DbHandler
+
+# Fixed base date so the 4-week seed data is deterministic in tests.
+BASE = datetime(2025, 2, 1, 12, 0, 0)
 
 
 def test_seed_creates_required_habits(tmp_path: Path) -> None:
     db_file = tmp_path / "habits.db"
     db = DbHandler(db_file)
 
-    db.seed_if_empty()
+    db.seed_if_empty(base=BASE)
     habits = db.list_habits()
 
     # At least 5 habits, daily + weekly
@@ -30,14 +32,14 @@ def test_completion_is_persisted(tmp_path: Path) -> None:
     db_file = tmp_path / "habits.db"
     db = DbHandler(db_file)
 
-    db.seed_if_empty()
+    db.seed_if_empty(base=BASE)
     habit = db.list_habits()[0]
 
     before = db.list_completions(habit_id=habit.id)  # type: ignore[arg-type]
 
     # Add a completion in a NEW period so it must be saved.
-    # Using +2 days makes this test robust even if seed already added a completion today.
-    when = datetime.now() + timedelta(days=2)
+    # Use BASE (+ 30 days) so it's always outside the seeded 28-day window.
+    when = BASE + timedelta(days=30)
     saved = db.add_completion(habit.id, when=when)  # type: ignore[arg-type]
 
     after = db.list_completions(habit_id=habit.id)  # type: ignore[arg-type]
@@ -52,7 +54,7 @@ def test_delete_habit_removes_completions(tmp_path: Path) -> None:
     db_file = tmp_path / "habits.db"
     db = DbHandler(db_file)
 
-    db.seed_if_empty()
+    db.seed_if_empty(base=BASE)
     habit = db.list_habits()[0]
 
     # ensure habit has completions
@@ -65,3 +67,4 @@ def test_delete_habit_removes_completions(tmp_path: Path) -> None:
     # completions should be gone due to FK cascade
     remaining = db.list_completions(habit_id=habit.id)  # type: ignore[arg-type]
     assert remaining == []
+    

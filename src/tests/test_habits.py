@@ -38,3 +38,19 @@ def test_habit_name_unique_constraint(tmp_path: Path) -> None:
 
     with pytest.raises(sqlite3.IntegrityError):
         db.create_habit("UniqueHabit", "d2", "weekly", user_id=u.id)
+
+def test_update_habit(tmp_path: Path) -> None:
+    db = DbHandler(tmp_path / "t.db")
+    u = db.create_user("u1")
+
+    h = db.create_habit("OldName", "desc", "daily", user_id=u.id)
+
+    updated = db.update_habit(
+        h.id,
+        name="NewName",
+        periodicity="weekly",
+    )
+
+    assert updated is not None
+    assert updated.name == "NewName"
+    assert updated.periodicity == "weekly"

@@ -25,6 +25,7 @@ from src.analytics.analytics import (
 # DB files instead of using this path.
 DB_PATH = Path(__file__).resolve().parent.parent / "habit_tracker.db"
 db = DbHandler(str(DB_PATH))
+
 # Seed demo data on first run to provide a pleasant out-of-the-box
 # experience when running the CLI locally.
 db.seed_if_empty()
@@ -43,6 +44,7 @@ def cmd_list() -> None:
     if not habits:
         click.echo("No habits stored yet.")
         return
+
     for h in habits:
         click.echo(
             f"[{h.id:02d}] "
@@ -58,7 +60,11 @@ def cmd_list() -> None:
 @click.option("--periodicity", type=click.Choice(["daily", "weekly"]), prompt=True)
 def cmd_create(name: str, description: str, periodicity: str) -> None:
     """Create a new habit with a task description and periodicity."""
-    h = db.create_habit(name=name, description=description, periodicity=periodicity)  # type: ignore[arg-type]
+    h = db.create_habit(
+        name=name,
+        description=description,
+        periodicity=periodicity,  # type: ignore[arg-type]
+    )
     click.echo(f"Created habit [{h.id}] {h.name} ({h.periodicity}).")
 
 
@@ -68,6 +74,31 @@ def cmd_delete(habit_id: int) -> None:
     """Delete a habit (and related completions)."""
     db.delete_habit(habit_id)
     click.echo(f"Deleted habit id={habit_id}.")
+
+
+@cli.command("edit")
+@click.argument("habit_id", type=int)
+@click.option("--name", help="New habit name")
+@click.option("--description", help="New description")
+@click.option("--periodicity", type=click.Choice(["daily", "weekly"]))
+def cmd_edit(
+    habit_id: int,
+    name: str | None,
+    description: str | None,
+    periodicity: str | None,
+) -> None:
+    """Edit an existing habit."""
+    habit = db.update_habit(
+        habit_id,
+        name=name,
+        description=description,
+        periodicity=periodicity,  # type: ignore[arg-type]
+    )
+
+    if habit is None:
+        click.echo("Habit not found.")
+    else:
+        click.echo(f"Updated habit [{habit.id}] {habit.name} ({habit.periodicity}).")
 
 
 @cli.command("checkoff")
@@ -124,6 +155,7 @@ def a_longest(habit_id: int) -> None:
     if habit is None:
         click.echo("Habit not found.")
         return
+
     comps = db.list_completions(habit_id=habit_id)
     streak = longest_streak_for(habit, comps)
     click.echo(f"Longest streak for {habit.name}: {streak} periods")
@@ -136,7 +168,9 @@ def a_streaks() -> None:
     comps = db.list_completions()
     rows = longest_streaks_per_habit(habits, comps)
     for h, s in rows:
-        click.echo(f"[{h.id}] {h.name} ({h.periodicity}) → longest streak: {s} periods")
+        click.echo(
+            f"[{h.id}] {h.name} ({h.periodicity}) → longest streak: {s} periods"
+        )
 
 
 @analytics.command("due-today")
@@ -160,3 +194,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+    

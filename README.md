@@ -1,6 +1,6 @@
 # Habit Tracker CLI Application
 
-Welcome to the **Habit Tracker** — a Python-based command-line interface (CLI) application for defining habits, checking them off periodically, and analysing habit streaks over time using analytics functions built on a functional programming approach.
+Welcome to the **Habit Tracker** — a Python-based command-line interface (CLI) application for creating and managing habits, tracking their completion over time, and analysing habit streaks using analytics functions built with a functional programming approach.
 
 This application was developed as part of the IU Portfolio Project for the module **DLBDSOOFPP01 – Object-Oriented and Functional Programming with Python**.
 
@@ -8,7 +8,7 @@ This application was developed as part of the IU Portfolio Project for the modul
 
 ## Features
 
-- Habit creation and deletion with **daily** and **weekly** periodicity  
+- Habit creation, editing, and deletion with **daily** and **weekly** periodicity
 - Habit completion (check-off) at any point in time  
 - Enforcement of **one completion per habit per period**  
 - Automatic streak tracking based on consecutive periods  
@@ -79,7 +79,7 @@ source .habit/bin/activate        # macOS / Linux
 ### 3. Install Dependencies
 
 ```bash
-pip install click pytest
+pip install -r requirements.txt
 ```
 
 ### 4. Launch the Application
@@ -146,6 +146,14 @@ python -m src.main delete <habit_id>
 
 ---
 
+## Edit a Habit
+
+```bash
+python -m src.main edit <habit_id> --name "New name" --description "New desc" --periodicity daily
+```
+
+---
+
 ## Analytics Commands
 
 ```bash
@@ -156,8 +164,8 @@ python -m src.main analytics due-today
 python -m src.main analytics streaks
 ```
 
-The database and tables are created automatically when the application starts.  
-The application is preloaded with 5 predefined habits and 4 weeks of example tracking data.
+The database and tables are created automatically when the application starts.
+If the database is empty, the application seeds 5 example habits and 4 weeks of tracking data.
 
 ---
 

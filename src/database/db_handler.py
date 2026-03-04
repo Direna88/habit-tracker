@@ -72,7 +72,7 @@ class DbHandler:
             """)
 
     # ----------------------------
-    # Users (NEW PUBLIC API)
+    # Users
     # ----------------------------
 
     def _row_to_user(self, row: sqlite3.Row) -> User:
@@ -207,6 +207,34 @@ class DbHandler:
                     (habit_id, user_id),
                 )
 
+    def update_habit(
+        self,
+        habit_id: int,
+        name: str | None = None,
+        description: str | None = None,
+        periodicity: Periodicity | None = None,
+    ) -> Habit | None:
+        """Update fields of a habit."""
+        habit = self.get_habit(habit_id)
+        if habit is None:
+            return None
+
+        new_name = name if name is not None else habit.name
+        new_description = description if description is not None else habit.description
+        new_periodicity = periodicity if periodicity is not None else habit.periodicity
+
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE habits
+                SET name = ?, description = ?, periodicity = ?
+                WHERE id = ?
+                """,
+                (new_name, new_description, new_periodicity, habit_id),
+            )
+
+        return Habit(habit_id, new_name, new_description, new_periodicity, habit.created_at)
+
     # ----------------------------
     # Completions
     # ----------------------------
@@ -276,19 +304,24 @@ class DbHandler:
     # Seed
     # ----------------------------
 
-    def seed_if_empty(self) -> None:
-        """Seed 5 habits + 4 weeks of fixture data if DB is empty."""
+    def seed_if_empty(self, base: datetime | None = None) -> None:
+        """Seed 5 habits + 4 weeks of fixture data if DB is empty.
+
+        `base` allows tests to generate the same seed data every time.
+        """
         if self.list_habits():
             return
 
         user_id = self._ensure_default_user()
 
-        start = (datetime.now() - timedelta(days=27)).replace(
+        base = base or datetime.now()
+
+        start = (base - timedelta(days=27)).replace(
             hour=18, minute=0, second=0, microsecond=0
         )
 
         h1 = self.create_habit(
-            "Morning stretch", "5–10 min mobility routine.", "daily",
+            "Morning stretch", "5-10 min mobility routine.", "daily",
             created_at=start, user_id=user_id
         )
         h2 = self.create_habit(
